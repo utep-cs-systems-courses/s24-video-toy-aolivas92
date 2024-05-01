@@ -1,0 +1,142 @@
+#include <msp430.h>
+#include <libTimer.h>
+#include "lcdutils.h"
+#include "lcddraw.h"
+
+// WARNING: LCD DISPLAY USES P1.0.  Do not touch!!! 
+
+#define LED BIT6		/* note that bit zero req'd for display */
+
+#define SW1 1
+#define SW2 2
+#define SW3 4
+#define SW4 8
+
+#define SWITCHES 15
+
+int blade_out = 0;
+u_char width = screenWidth, height = screenHeight;
+u_char saber_width_loc = (screenWidth/2) - 5;
+u_int blade_color = 2016;
+
+static char 
+switch_update_interrupt_sense()
+{
+  char p2val = P2IN;
+  /* update switch interrupt to detect changes from current buttons */
+  P2IES |= (p2val & SWITCHES);	/* if switch up, sense down */
+  P2IES &= (p2val | ~SWITCHES);	/* if switch down, sense up */
+  return p2val;
+}
+
+void 
+switch_init()			/* setup switch */
+{  
+  P2REN |= SWITCHES;		/* enables resistors for switches */
+  P2IE |= SWITCHES;		/* enable interrupts from switches */
+  P2OUT |= SWITCHES;		/* pull-ups for switches */
+  P2DIR &= ~SWITCHES;		/* set switches' bits for input */
+  switch_update_interrupt_sense();
+}
+
+int switches = 0;
+
+void
+switch_interrupt_handler()
+{
+  char p2val = switch_update_interrupt_sense();
+  switches = ~p2val & SWITCHES;
+}
+
+void lightsaber_handle_draw() {
+  // Draw Handle
+  fillRectangle(saber_width_loc, screenHeight-50, 10, 40, COLOR_BLACK);
+  fillRectangle(saber_width_loc+4, screenHeight - 45, 3, 5, COLOR_ORANGE); 
+  // Draw Texture on Hangle
+  for (int j = 0; j < 20; j++)
+    for (int i = 0; i < 10; i ++) {
+      if (i%2 == 0)
+	drawPixel(saber_width_loc+i+1, screenHeight-30+j, COLOR_GRAY);
+	
+    }
+}
+
+u_char top_height = 20;
+u_char bottom_height = 110;
+
+void lightsaber_blade_extend() {
+  u_char start_saber_height = 0;
+  
+  for (int i = bottom_height; i >= top_height; i -=10) {
+    fillRectangle(saber_width_loc+2, i, 7, start_saber_height, blade_color);
+    start_saber_height += 10;
+    __delay_cycles(1000000);
+  }
+  blade_out = 1;
+}
+
+void lightsaber_blade_hide() {
+  u_char start_saber_height = 90;
+
+  for (int i = top_height; i <= bottom_height; i += 10){
+    fillRectangle(saber_width_loc+2, i-10, 10, start_saber_height, COLOR_BLUE);
+    fillRectangle(saber_width_loc+2, i, 7, start_saber_height, blade_color);
+    start_saber_height -= 10;
+    __delay_cycles(1000000);
+  }
+  fillRectangle(saber_width_loc+2, top_height, 10, 90, COLOR_BLUE);
+  blade_out = 0;
+}
+    
+short redrawScreen = 1;
+u_int controlFontColor = COLOR_GREEN;
+
+void wdt_c_handler()
+{
+  if (switches & SW1) {
+    if (blade_out == 0)
+      lightsaber_blade_extend();
+  }
+  if (switches & SW2) {
+    if (blade_out == 1)
+      lightsaber_blade_hide();
+  }
+  if (switches & SW3) {
+    if (blade_out == 0)
+      blade_color = 0 | 31 | 0;
+  }
+  if (switches & SW4){
+    if (blade_out == 0)
+      blade_color = 0 | 0 | 31;
+  }
+  redrawScreen = 1;
+}
+  
+void update_shape();
+
+void main()
+{
+  
+  P1DIR |= LED;		/**< Green led on when CPU on */
+  P1OUT |= LED;
+  configureClocks();
+  lcd_init();
+  switch_init();
+  
+  enableWDTInterrupts();      /**< enable periodic interrupt */
+  or_sr(0x8);	              /**< GIE (enable interrupts) */
+  
+  clearScreen(COLOR_BLUE);
+  lightsaber_handle_draw();
+  P1OUT &= ~LED;	/* led off */
+  or_sr(0x10);	/**< CPU OFF */
+  P1OUT |= LED;	/* led on */
+}
+
+void
+__interrupt_vec(PORT2_VECTOR) Port_2(){
+  if (P2IFG & SWITCHES) {	      /* did a button cause this interrupt? */
+    P2IFG &= ~SWITCHES;		      /* clear pending sw interrupts */
+    switch_interrupt_handler();	/* single handler for all switches */
+  }
+}
